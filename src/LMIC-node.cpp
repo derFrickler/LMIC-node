@@ -57,8 +57,35 @@
 //  █ █ ▀▀█ █▀▀ █▀▄   █   █ █ █ █ █▀▀   █▀▄ █▀▀ █ █  █  █ █
 //  ▀▀▀ ▀▀▀ ▀▀▀ ▀ ▀   ▀▀▀ ▀▀▀ ▀▀  ▀▀▀   ▀▀  ▀▀▀ ▀▀▀ ▀▀▀ ▀ ▀
 
+/* GPS */
+#include <TinyGPS++.h>
 
-const uint8_t payloadBufferLength = 4;    // Adjust to fit max payload length
+/* on the BetaFPV nanorfx we only have one serial, so we use RX for the GPS, and TX for the console log - 
+// only works with 115200 baud GPS, testet with the BZGNSS BZ-121 nanoGPS
+// GPS Rx pin 
+#define GPS_RX 13
+// GPS Tx pin  
+#define GPS_TX 12
+// GPS baud rate 
+#define GPS_BAUD 57600 
+*/
+
+/* GPS coordinates of mapped gateway for calculating the distance */
+const double HOME_LAT = 0.0;
+const double HOME_LNG =  0.0;
+
+/* Initial sending interval in seconds */
+const unsigned TX_INTERVAL = 30;
+
+/* Upper TinyGPS++ HDOP value limit to send Pakets with */
+int HDOP_MAX = 300; // Set to 200-500 (HDOP 2.00 - 5.00)
+
+/* Time to wait in seconds if HDOP is above limit */
+const unsigned TX_WAIT_INTERVAL = 5;
+
+/* Init GPS */
+TinyGPSPlus gps;
+const uint8_t payloadBufferLength = 9;    // Adjust to fit max payload length
 
 
 //  █ █ █▀▀ █▀▀ █▀▄   █▀▀ █▀█ █▀▄ █▀▀   █▀▀ █▀█ █▀▄
@@ -706,6 +733,185 @@ void resetCounter()
     counter_ = 0;
 }
 
+void build_packet() {
+    /* For sprintf to OLED display */
+    char s[16]; 
+    String toLog;
+    
+    uint32_t LatitudeBinary, LongitudeBinary;
+    uint16_t altitudeGps;
+    uint8_t hdopGps;
+    
+    /* Get GPS data */
+    double latitude = gps.location.lat();
+    double longitude = gps.location.lng();
+    double altitude = gps.altitude.meters();
+    uint32_t hdop = gps.hdop.value();
+  
+    /* For OLED display */
+    float hdopprint = (float)hdop / 100.0;
+    uint32_t sats = gps.satellites.value();
+    uint32_t characters = gps.charsProcessed();
+    uint32_t fixes = gps.sentencesWithFix();
+    double failedchecksums = gps.failedChecksum();
+    double passedchecksums = gps.passedChecksum();
+    float speed = gps.speed.kmph();
+  
+    /* Serial output */
+    Serial.println();
+  
+    /* Distance to GW in Meters */
+    double fromhome = gps.distanceBetween(gps.location.lat(), gps.location.lng(), HOME_LAT, HOME_LNG);
+  
+    /* Course to GW */
+    double direction_home = gps.courseTo(gps.location.lat(), gps.location.lng(), HOME_LAT, HOME_LNG);
+  
+    Serial.print("Latitude:             ");
+    sprintf(s, "%f", latitude);
+    Serial.println(s);
+    //Serial.println(latitude);
+    Serial.print("Longitude:            ");
+    sprintf (s, "%f", longitude);
+    Serial.println(s);
+    //Serial.println(longitude);
+    Serial.print("Altitude (m):         ");
+    Serial.println(altitude);
+    Serial.print("Speed (km/h):         ");
+    Serial.println(speed);
+    Serial.print("HDOP:                 ");
+    Serial.println(hdopprint);
+    Serial.print("Satellite count:      ");
+    Serial.println(sats);
+    if ( fromhome < 1000) {
+      // Less than 1000 m
+      Serial.print("Distance to GW (m):   ");
+      Serial.println(fromhome);
+    } else {
+      // More than 1 km
+      Serial.print("Distance to GW (km):  ");
+      Serial.println(fromhome/1000);
+    }
+    Serial.print("Direction to GW:      ");
+    Serial.print((String)gps.cardinal(direction_home) + " (" + (String)direction_home + "°)");
+  
+    /*
+    Serial.print("Characters processed: ");
+    Serial.println(characters);
+    Serial.print("Sentences with fix:   ");
+    Serial.println(fixes);
+    Serial.print("Checksum passed:      ");
+    Serial.println(passedchecksums);
+    Serial.print("Checksum failed:      ");
+    Serial.println(failedchecksums);
+    */
+  
+    LatitudeBinary = ((latitude + 90) / 180.0) * 16777215;
+    LongitudeBinary = ((longitude + 180) / 360.0) * 16777215;
+  
+    /*
+    // OLED output 
+    // Latitude
+    display.clearLine(1);
+    display.setCursor(0, 1);
+    display.print("Lati ");
+    display.setCursor(5, 1);
+    sprintf(s, "%f", latitude);
+    display.print(s);
+  
+    // Longitude
+    display.clearLine(2);
+    display.setCursor(0, 2);
+    display.print("Long ");
+    display.setCursor(5, 2);
+    sprintf(s, "%f", longitude);
+    display.print(s);
+  
+    // Altitude
+    display.clearLine(3);
+    display.setCursor(0, 3);
+    display.print("Alti ");
+    display.setCursor(5, 3);
+    sprintf(s, "%f", altitude);
+    display.print(s);
+  
+    // Number of fixes
+    display.clearLine(4);
+    display.setCursor(0, 4);
+    display.print("Fixs ");
+    display.setCursor(5, 4);
+    display.print(fixes);
+    
+  
+    // Distance from home GW
+    display.clearLine(4);
+    display.setCursor(0, 4);
+    display.print("Dist ");
+    display.setCursor(5, 4);
+    if ( fromhome < 1000) {
+      // Less than 1000 m
+      sprintf(s, "%.0f m", fromhome);
+      // More than 1 km
+    } else {
+      sprintf(s, "%.3f km", fromhome/1000);
+    }
+    display.print(s);
+  
+    // HDOP
+    display.clearLine(5);
+    display.setCursor(0, 5);
+    display.print("HDOP ");
+    display.setCursor(5, 5);
+    display.print(hdopprint);
+  
+    // Number of satellites
+    display.clearLine(6);
+    display.setCursor(0, 6);
+    display.print("Sats ");
+    display.setCursor(5, 6);
+    display.print(sats);
+    
+
+    // Interval and Counter values are combined on a single row.
+    // This allows to keep the 3rd row empty which makes the
+    // information better readable on the small display.
+    display.clearLine(INTERVAL_ROW);
+    display.setCursor(COL_0, INTERVAL_ROW);
+    display.print("I:");
+    display.print(doWorkIntervalSeconds);
+    display.print("s");        
+    display.print(" Sats:");
+    display.print(fixes);
+
+    */
+  
+    payloadBuffer[0] = ( LatitudeBinary >> 16 ) & 0xFF;
+    payloadBuffer[1] = ( LatitudeBinary >> 8 ) & 0xFF;
+    payloadBuffer[2] = LatitudeBinary & 0xFF;
+  
+    payloadBuffer[3] = ( LongitudeBinary >> 16 ) & 0xFF;
+    payloadBuffer[4] = ( LongitudeBinary >> 8 ) & 0xFF;
+    payloadBuffer[5] = LongitudeBinary & 0xFF;
+  
+    altitudeGps = altitude;
+    payloadBuffer[6] = ( altitudeGps >> 8 ) & 0xFF;
+    payloadBuffer[7] = altitudeGps & 0xFF;
+  
+    hdopGps = hdop/10;
+    payloadBuffer[8] = hdopGps & 0xFF;
+  
+    toLog = "";
+    for(size_t i = 0; i<sizeof(payloadBuffer); i++) {
+      char buffer[3];
+      sprintf(buffer, "%02x", payloadBuffer[i]);
+      toLog = toLog + String(buffer);
+    }
+    Serial.println();
+  
+    /* Print Tx buffer on serial console */
+    Serial.println(toLog);
+  }
+
+
 
 void processWork(ostime_t doWorkJobTimeStamp)
 {
@@ -718,6 +924,35 @@ void processWork(ostime_t doWorkJobTimeStamp)
     // reading sensor and GPS data and schedule uplink
     // messages if anything needs to be transmitted.
 
+    while (Serial.available()) {
+        char c = Serial.read();
+        //Serial.write(c); // uncomment this line if you want to see the GPS data flowing
+        //led.toggle();
+        gps.encode(c);
+    }
+
+    led.flash(gps.satellites.value()+1, 100,100,0,0);
+    Serial.println();
+    Serial.print("Sats: " + String(gps.satellites.value()));
+    Serial.println(" HDOP: " + String(gps.hdop.value() / 100.0));
+
+    /*
+    // Number of fixes
+    display.clearLine(3);
+    display.setCursor(0, 3);
+    display.print("Sats ");
+    display.setCursor(5, 3);
+    display.print(String(gps.satellites.value()));
+    */
+
+    if (gps.satellites.value() < 5) {
+        // Not enough satellites, do not send.
+        #ifdef USE_SERIAL
+            printEvent(doWorkJobTimeStamp, "Not enough satellites", PrintTarget::Serial);
+        #endif
+        return;
+    } 
+
     // Skip processWork if using OTAA and still joining.
     if (LMIC.devaddr != 0)
     {
@@ -726,9 +961,12 @@ void processWork(ostime_t doWorkJobTimeStamp)
         // The counter is increased automatically by getCounterValue()
         // and can be reset with a 'reset counter' command downlink message.
 
-        uint16_t counterValue = getCounterValue();
+        //uint16_t counterValue = getCounterValue();
         ostime_t timestamp = os_getTime();
 
+        build_packet();
+
+        /*
         #ifdef USE_DISPLAY
             // Interval and Counter values are combined on a single row.
             // This allows to keep the 3rd row empty which makes the
@@ -746,7 +984,8 @@ void processWork(ostime_t doWorkJobTimeStamp)
             printSpaces(serial, MESSAGE_INDENT);
             serial.print(F("COUNTER value: "));
             serial.println(counterValue);
-        #endif    
+        #endif  
+        */  
 
         // For simplicity LMIC-node will try to send an uplink
         // message every time processWork() is executed.
@@ -766,9 +1005,9 @@ void processWork(ostime_t doWorkJobTimeStamp)
         {
             // Prepare uplink payload.
             uint8_t fPort = 10;
-            payloadBuffer[0] = counterValue >> 8;
-            payloadBuffer[1] = counterValue & 0xFF;
-            uint8_t payloadLength = 2;
+            //payloadBuffer[0] = counterValue >> 8;
+            //payloadBuffer[1] = counterValue & 0xFF;
+            uint8_t payloadLength = payloadBufferLength;
 
             scheduleUplink(fPort, payloadBuffer, payloadLength);
         }
