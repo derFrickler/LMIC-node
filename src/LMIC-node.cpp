@@ -75,7 +75,7 @@ const double HOME_LAT = 0.0;
 const double HOME_LNG =  0.0;
 
 /* Initial sending interval in seconds */
-const unsigned TX_INTERVAL = 30;
+const unsigned TX_INTERVAL = 60;
 
 /* Upper TinyGPS++ HDOP value limit to send Pakets with */
 int HDOP_MAX = 300; // Set to 200-500 (HDOP 2.00 - 5.00)
